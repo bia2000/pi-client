@@ -1,0 +1,47 @@
+{
+  "name": "pi-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron + Vue desktop chat client powered by Pi Agent",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "dist": "vue-tsc --noEmit && vite build && electron-builder"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.78.0",
+    "@earendil-works/pi-coding-agent": "0.78.0",
+    "dotenv": "17.4.2",
+    "vue": "3.5.35"
+  },
+  "devDependencies": {
+    "@rolldown/pluginutils": "1.0.1",
+    "@types/node": "25.9.1",
+    "@vitejs/plugin-vue": "6.0.7",
+    "electron": "42.3.0",
+    "electron-builder": "26.8.1",
+    "typescript": "6.0.3",
+    "vite": "8.0.14",
+    "vite-plugin-electron": "0.29.1",
+    "vue-tsc": "3.3.3"
+  },
+  "build": {
+    "appId": "com.example.pi-client",
+    "productName": "Pi Client",
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}
