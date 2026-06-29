@@ -1,9 +1,42 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow } from "electron";
 import path from "node:path";
-import { PiChatService } from "./pi-chat-service";
+import { RecruitmentAgent } from "./main/agent-core";
+import { closeDb, initDb } from "./main/db/sqlite";
+import { makeTimelineSender, registerIpc } from "./main/ipc";
+import { loadSettings } from "./main/settings-store";
 
 let mainWindow: BrowserWindow | null = null;
-const chatService = new PiChatService();
+let dbError: string | undefined;
+
+app.whenReady().then(async () => {
+  // 1) 初始化本地牛人库（原生模块加载失败时记录错误，不阻断其余功能）
+  try {
+    initDb(path.join(app.getPath("userData"), "pi-agent.db"));
+  } catch (error) {
+    dbError = error instanceof Error ? error.message : String(error);
+    console.error("[main] SQLite 初始化失败：", dbError);
+  }
+
+  // 2) 加载设置 + 创建招聘 Agent
+  loadSettings();
+  const getWindow = () => mainWindow;
+  const agent = new RecruitmentAgent(app.getAppPath(), {
+    onTimeline: makeTimelineSender(getWindow),
+    getSettings: () => loadSettings().crawler,
+  });
+
+  // 3) 注册 IPC
+  registerIpc({ getWindow, agent, dbError });
+
+  // 4) 创建窗口
+  await createMainWindow();
+
+  app.on("activate", async () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      await createMainWindow();
+    }
+  });
+});
 
 async function createMainWindow() {
   mainWindow = new BrowserWindow({
@@ -28,40 +61,13 @@ async function createMainWindow() {
   }
 }
 
-app.whenReady().then(async () => {
-  ipcMain.handle("chat:runtime-info", async () => chatService.getRuntimeInfo());
-
-  ipcMain.handle("chat:reset-session", async () => chatService.reset());
-
-  ipcMain.handle("chat:send-message", async (_event, prompt: string) => {
-    if (!mainWindow) {
-      return;
-    }
-
-    await chatService.sendPrompt(prompt, {
-      onDelta: (payload) => {
-        mainWindow?.webContents.send("chat:assistant-delta", payload);
-      },
-      onDone: (payload) => {
-        mainWindow?.webContents.send("chat:assistant-done", payload);
-      },
-      onError: (payload) => {
-        mainWindow?.webContents.send("chat:assistant-error", payload);
-      },
-    });
-  });
-
-  await createMainWindow();
-
-  app.on("activate", async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      await createMainWindow();
-    }
-  });
-});
-
 app.on("window-all-closed", () => {
+  closeDb();
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", () => {
+  closeDb();
 });

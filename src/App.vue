@@ -1,286 +1,143 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
-import type { AgentRuntimeInfo, ChatMessage } from "../electron/shared";
+import { computed, onMounted, onUnmounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import {
+  NConfigProvider,
+  NMessageProvider,
+  NLayout,
+  NLayoutSider,
+  NLayoutHeader,
+  NLayoutContent,
+  NMenu,
+  NSpace,
+  NTag,
+  darkTheme,
+  type MenuOption,
+} from "naive-ui";
+import { useAgentStore } from "./stores/agent";
 
-const messages = ref<ChatMessage[]>([
-  {
-    id: "welcome",
-    role: "assistant",
-    content:
-      "Pi Client 已就绪。你可以直接开始对话；默认禁用了工具调用，只保留纯聊天模式，后续再扩展 Agent 工具会更安全。",
-    createdAt: Date.now(),
-  },
-]);
-const input = ref("");
-const runtimeInfo = ref<AgentRuntimeInfo | null>(null);
-const pending = ref(false);
-const errorMessage = ref("");
-const currentAssistantMessageId = ref<string | null>(null);
+const agent = useAgentStore();
+const route = useRoute();
+const router = useRouter();
 
-const canSend = computed(() => input.value.trim().length > 0 && !pending.value);
+const menuOptions: MenuOption[] = [
+  { label: "智能体控制台", key: "/console" },
+  { label: "牛人库", key: "/talents" },
+  { label: "设置", key: "/settings" },
+];
+
+const activeKey = computed(() => route.path);
+const title = computed(() => (route.meta.title as string) ?? "Pi-Agent");
+
 const statusLabel = computed(() => {
-  if (pending.value) {
-    return "Pi 正在回复";
-  }
-
-  if (errorMessage.value) {
-    return "连接异常";
-  }
-
-  return runtimeInfo.value?.ready ? "已连接 Pi Agent" : "初始化中";
+  if (agent.pending) return "Agent 执行中";
+  if (agent.error) return "运行异常";
+  if (!agent.runtimeInfo) return "检查环境中";
+  if (agent.runtimeInfo.dbReady === false) return "数据库不可用";
+  return agent.runtimeInfo.ready ? "运行就绪" : "待补充模型配置";
 });
 
-function appendMessage(message: ChatMessage) {
-  messages.value = [...messages.value, message];
-}
-
-function upsertAssistantMessage(messageId: string, delta: string) {
-  const index = messages.value.findIndex((message) => message.id === messageId);
-
-  if (index === -1) {
-    appendMessage({
-      id: messageId,
-      role: "assistant",
-      content: delta,
-      createdAt: Date.now(),
-      pending: true,
-    });
-    currentAssistantMessageId.value = messageId;
-    return;
-  }
-
-  const next = [...messages.value];
-  next[index] = {
-    ...next[index],
-    content: next[index].content + delta,
-    pending: true,
-  };
-  messages.value = next;
-}
-
-function finalizeAssistantMessage(messageId: string, finalText: string) {
-  const index = messages.value.findIndex((message) => message.id === messageId);
-
-  if (index === -1) {
-    appendMessage({
-      id: messageId,
-      role: "assistant",
-      content: finalText,
-      createdAt: Date.now(),
-    });
-  } else {
-    const next = [...messages.value];
-    next[index] = {
-      ...next[index],
-      content: finalText || next[index].content,
-      pending: false,
-    };
-    messages.value = next;
-  }
-
-  pending.value = false;
-  currentAssistantMessageId.value = null;
-}
-
-function markAssistantError(messageId: string, error: string) {
-  const index = messages.value.findIndex((message) => message.id === messageId);
-
-  if (index === -1) {
-    appendMessage({
-      id: messageId,
-      role: "assistant",
-      content: error,
-      createdAt: Date.now(),
-      error: true,
-    });
-  } else {
-    const next = [...messages.value];
-    next[index] = {
-      ...next[index],
-      pending: false,
-      error: true,
-      content: next[index].content || error,
-    };
-    messages.value = next;
-  }
-
-  errorMessage.value = error;
-  pending.value = false;
-  currentAssistantMessageId.value = null;
-}
-
-async function bootstrap() {
-  runtimeInfo.value = await window.piChat.getRuntimeInfo();
-}
-
-async function sendMessage() {
-  const prompt = input.value.trim();
-
-  if (!prompt || pending.value) {
-    return;
-  }
-
-  errorMessage.value = "";
-  pending.value = true;
-
-  appendMessage({
-    id: crypto.randomUUID(),
-    role: "user",
-    content: prompt,
-    createdAt: Date.now(),
-  });
-
-  input.value = "";
-
-  try {
-    await window.piChat.sendMessage(prompt);
-  } catch (error) {
-    pending.value = false;
-    errorMessage.value = error instanceof Error ? error.message : "消息发送失败";
-  }
-}
-
-async function resetConversation() {
-  runtimeInfo.value = await window.piChat.resetSession();
-  pending.value = false;
-  errorMessage.value = "";
-  currentAssistantMessageId.value = null;
-  messages.value = [
-    {
-      id: "welcome",
-      role: "assistant",
-      content: "会话已重置。你现在可以开始一段新的对话。",
-      createdAt: Date.now(),
-    },
-  ];
-}
-
-function handleComposerKeydown(event: KeyboardEvent) {
-  if (event.key === "Enter" && !event.shiftKey) {
-    event.preventDefault();
-    void sendMessage();
-  }
-}
-
-let disposeDelta = () => {};
-let disposeDone = () => {};
-let disposeError = () => {};
-
-onMounted(async () => {
-  disposeDelta = window.piChat.onAssistantDelta(({ messageId, delta }) => {
-    upsertAssistantMessage(messageId, delta);
-  });
-
-  disposeDone = window.piChat.onAssistantDone(({ messageId, text }) => {
-    finalizeAssistantMessage(messageId, text);
-  });
-
-  disposeError = window.piChat.onAssistantError(({ messageId, error }) => {
-    markAssistantError(messageId, error);
-  });
-
-  await bootstrap();
+const statusType = computed<"success" | "warning" | "error" | "default">(() => {
+  if (agent.pending) return "default";
+  if (agent.error || agent.runtimeInfo?.dbReady === false) return "error";
+  if (!agent.runtimeInfo?.ready) return "warning";
+  return "success";
 });
 
-onUnmounted(() => {
-  disposeDelta();
-  disposeDone();
-  disposeError();
-});
+function onSelect(key: string) {
+  router.push(key);
+}
+
+onMounted(() => agent.init());
+onUnmounted(() => agent.dispose());
 </script>
 
 <template>
-  <div class="shell">
-    <aside class="sidebar">
-      <div class="brand-card">
-        <p class="eyebrow">Electron + Vue + Pi Agent</p>
-        <h1>Pi Client</h1>
-        <p class="brand-copy">
-          桌面聊天框架已经搭好，Pi 跑在主进程，界面和状态流在 Vue 侧独立维护。
-        </p>
-      </div>
-
-      <div class="status-card">
-        <div class="status-pill" :class="{ live: !pending && !errorMessage }">
-          {{ statusLabel }}
+  <NConfigProvider :theme="darkTheme">
+   <NMessageProvider>
+    <NLayout has-sider class="shell">
+      <NLayoutSider bordered :width="220" content-class="sider-content">
+        <div class="brand">
+          <p class="brand-eyebrow">Pi-Agent</p>
+          <h1>BOSS直聘<br />智能招聘助手</h1>
         </div>
-        <dl class="meta-grid">
-          <div>
-            <dt>Provider</dt>
-            <dd>{{ runtimeInfo?.provider || "未配置" }}</dd>
-          </div>
-          <div>
-            <dt>Model</dt>
-            <dd>{{ runtimeInfo?.modelId || "自动选择" }}</dd>
-          </div>
-          <div>
-            <dt>Workspace</dt>
-            <dd>{{ runtimeInfo?.workspace || "当前目录" }}</dd>
-          </div>
-          <div>
-            <dt>API Key</dt>
-            <dd>{{ runtimeInfo?.hasApiKey ? "已检测到" : "未检测到" }}</dd>
-          </div>
-          <div>
-            <dt>Auth Providers</dt>
-            <dd>{{ runtimeInfo?.configuredProviders?.join(", ") || "无" }}</dd>
-          </div>
-          <div>
-            <dt>Custom Provider</dt>
-            <dd>{{ runtimeInfo?.customProvider ? "已启用" : "未启用" }}</dd>
-          </div>
-          <div v-if="runtimeInfo?.customBaseUrl">
-            <dt>Custom Base URL</dt>
-            <dd>{{ runtimeInfo.customBaseUrl }}</dd>
-          </div>
-        </dl>
-      </div>
-
-      <button class="secondary-button" type="button" @click="resetConversation">
-        新建会话
-      </button>
-    </aside>
-
-    <main class="chat-panel">
-      <header class="chat-header">
-        <div>
-          <p class="eyebrow">Desktop Chat</p>
-          <h2>面向 Agent 的桌面对话骨架</h2>
+        <NMenu :value="activeKey" :options="menuOptions" @update:value="onSelect" />
+        <div class="sider-footer">
+          <NTag size="small" :type="statusType" round>{{ statusLabel }}</NTag>
         </div>
-        <p class="header-hint">默认纯聊天模式，避免未授权工具调用。</p>
-      </header>
+      </NLayoutSider>
 
-      <section class="messages">
-        <article
-          v-for="message in messages"
-          :key="message.id"
-          class="message"
-          :class="[message.role, { pending: message.pending, error: message.error }]"
-        >
-          <div class="message-meta">
-            <span>{{ message.role === "user" ? "你" : "Pi" }}</span>
-            <span>{{ new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) }}</span>
-          </div>
-          <p>{{ message.content }}</p>
-        </article>
-      </section>
-
-      <footer class="composer">
-        <label class="composer-shell">
-          <textarea
-            v-model="input"
-            rows="4"
-            placeholder="输入你的问题，Enter 发送，Shift + Enter 换行"
-            @keydown="handleComposerKeydown"
-          />
-        </label>
-        <div class="composer-actions">
-          <p class="composer-hint">{{ errorMessage || "先确认右侧已检测到 API Key，再发起真实请求。" }}</p>
-          <button class="primary-button" type="button" :disabled="!canSend" @click="sendMessage">
-            {{ pending ? "回复中..." : "发送" }}
-          </button>
-        </div>
-      </footer>
-    </main>
-  </div>
+      <NLayout>
+        <NLayoutHeader bordered class="topbar">
+          <NSpace align="center" justify="space-between" style="width: 100%">
+            <span class="topbar-title">{{ title }}</span>
+            <NSpace align="center" :size="12">
+              <NTag v-if="agent.runtimeInfo?.provider" size="small" type="info" round>
+                {{ agent.runtimeInfo.provider }}
+              </NTag>
+              <NTag v-if="agent.runtimeInfo?.modelId" size="small" round>
+                {{ agent.runtimeInfo.modelId }}
+              </NTag>
+              <NTag
+                v-if="agent.runtimeInfo?.dbReady === false"
+                size="small"
+                type="error"
+                :title="agent.runtimeInfo?.dbError"
+              >
+                数据库不可用
+              </NTag>
+            </NSpace>
+          </NSpace>
+        </NLayoutHeader>
+        <NLayoutContent class="content">
+          <RouterView />
+        </NLayoutContent>
+        </NLayout>
+      </NLayout>
+   </NMessageProvider>
+  </NConfigProvider>
 </template>
+
+<style scoped>
+.shell {
+  height: 100vh;
+}
+.sider-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.brand {
+  padding: 18px 18px 8px;
+}
+.brand-eyebrow {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  color: rgba(226, 236, 255, 0.55);
+}
+.brand h1 {
+  margin: 6px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.sider-footer {
+  margin-top: auto;
+  padding: 14px 18px;
+}
+.topbar {
+  padding: 10px 22px;
+  display: flex;
+  align-items: center;
+}
+.topbar-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.content {
+  padding: 18px 22px;
+  height: calc(100vh - 53px);
+  overflow: auto;
+}
+</style>

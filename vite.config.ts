@@ -12,7 +12,12 @@ export default defineConfig({
         vite: {
           build: {
             rollupOptions: {
-              external: ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"],
+              external: [
+                "@earendil-works/pi-ai",
+                "@earendil-works/pi-coding-agent",
+                "better-sqlite3",
+                "axios",
+              ],
             },
           },
         },

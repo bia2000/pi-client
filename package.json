@@ -8,16 +8,34 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "dist": "vue-tsc --noEmit && vite build && electron-builder"
+    "dist": "vue-tsc --noEmit && vite build && electron-builder",
+    "rebuild:native": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-rebuild -f -w better-sqlite3 || echo \"[postinstall] better-sqlite3 rebuild skipped/failed — run pnpm rebuild:native manually if DB fails at runtime\""
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.78.0",
     "@earendil-works/pi-coding-agent": "0.78.0",
+    "@joohw/boss-cli": "^0.5.0",
+    "axios": "^1.18.1",
+    "better-sqlite3": "^12.11.1",
     "dotenv": "17.4.2",
-    "vue": "3.5.35"
+    "highlight.js": "^11.11.1",
+    "markdown-it": "^14.2.0",
+    "naive-ui": "^2.44.1",
+    "pinia": "^3.0.4",
+    "vue": "3.5.35",
+    "vue-router": "^5.1.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
     "@rolldown/pluginutils": "1.0.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "25.9.1",
     "@vitejs/plugin-vue": "6.0.7",
     "electron": "42.3.0",
@@ -38,6 +56,9 @@
     "directories": {
       "output": "release"
     },
+    "asarUnpack": [
+      "**/better-sqlite3/**"
+    ],
     "win": {
       "target": [
         "nsis"
