@@ -60,7 +60,8 @@ const items = computed(() =>
 <style scoped>
 .timeline-box {
   height: 100%;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 14px 14px 18px;
 }
 .box-title {

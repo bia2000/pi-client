@@ -1,14 +1,17 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  AgentInfo,
   AgentRuntimeInfo,
   AgentStreamDeltaEvent,
   AgentStreamDoneEvent,
   AgentStreamErrorEvent,
+  AgentSettings,
   Candidate,
   CandidateFilter,
   CandidateStats,
   CandidateStatus,
   CrawlerSettings,
+  ModelPreset,
   TimelineEvent,
 } from "./shared";
 
@@ -42,6 +45,8 @@ contextBridge.exposeInMainWorld("piAgent", {
   getRuntimeInfo: (): Promise<AgentRuntimeInfo> => ipcRenderer.invoke("agent:runtime-info"),
   sendMessage: (prompt: string): Promise<void> => ipcRenderer.invoke("agent:send-message", prompt),
   resetSession: (): Promise<AgentRuntimeInfo> => ipcRenderer.invoke("agent:reset-session"),
+  /** 中止当前流式响应，不重置会话历史 */
+  abort: (): Promise<void> => ipcRenderer.invoke("agent:abort"),
   onAssistantDelta: (listener: (event: AgentStreamDeltaEvent) => void) =>
     subscribe(listeners.delta, listener),
   onAssistantDone: (listener: (event: AgentStreamDoneEvent) => void) =>
@@ -61,10 +66,26 @@ contextBridge.exposeInMainWorld("piAgent", {
     stats: (): Promise<CandidateStats> => ipcRenderer.invoke("talents:stats"),
   },
 
-  // —— 设置 ——
+  // —— 设置（含模型 preset 列表） ——
   settings: {
-    get: (): Promise<{ crawler: CrawlerSettings }> => ipcRenderer.invoke("settings:get"),
-    save: (patch: Partial<CrawlerSettings>): Promise<{ crawler: CrawlerSettings }> =>
+    get: (): Promise<AgentSettings> => ipcRenderer.invoke("settings:get"),
+    save: (patch: Partial<CrawlerSettings>): Promise<AgentSettings> =>
       ipcRenderer.invoke("settings:save", patch),
+  },
+
+  // —— 模型 preset 管理 / 切换 ——
+  models: {
+    list: (): Promise<ModelPreset[]> => ipcRenderer.invoke("agent:list-models"),
+    save: (models: ModelPreset[]): Promise<AgentSettings> =>
+      ipcRenderer.invoke("agent:save-models", models),
+    switch: (id: string): Promise<AgentRuntimeInfo> =>
+      ipcRenderer.invoke("agent:switch-model", id),
+  },
+
+  // —— Agent 列表 / 切换 ——
+  agents: {
+    list: (): Promise<AgentInfo[]> => ipcRenderer.invoke("agent:list-agents"),
+    switch: (id: string): Promise<AgentRuntimeInfo> =>
+      ipcRenderer.invoke("agent:switch-agent", id),
   },
 });

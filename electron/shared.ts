@@ -33,6 +33,14 @@ export interface AgentRuntimeInfo {
   /** SQLite 是否可用（原生模块加载失败时为 false） */
   dbReady?: boolean;
   dbError?: string;
+  /** 当前 Agent id（如 "boss-recruit"） */
+  agentId?: string;
+  /** 当前活动模型 preset id */
+  activeModelId?: string;
+  /** 已注册的 Agent 列表（前端下拉用） */
+  availableAgents?: AgentInfo[];
+  /** 已配置的模型 preset 列表（前端下拉用） */
+  availableModels?: ModelPreset[];
 }
 
 export interface AgentStreamEvent {
@@ -157,8 +165,58 @@ export interface CrawlerSettings {
   maxPerTask: number;
 }
 
+/**
+ * API 协议字符串字面量联合（与 @earendil-works/pi-ai 的 Api 类型对齐）。
+ * 用字符串字面量避免在 shared.ts 中引入 ESM-only 的 pi-ai 类型。
+ */
+export type ApiProtocol =
+  | "anthropic"
+  | "openai-completions"
+  | "openai-responses"
+  | "azure-openai-responses"
+  | "openai-codex-responses"
+  | "google"
+  | "google-vertex"
+  | "mistral"
+  | "bedrock";
+
+/** 模型预设 —— 用户可在设置页配置多个，运行时切换。 */
+export interface ModelPreset {
+  /** 唯一 id（前端选择用） */
+  id: string;
+  /** 显示名称，如 "GPT-4.1 Mini" */
+  name: string;
+  /** provider 名，如 "openai" / "anthropic" / 自定义 provider 名 */
+  provider: string;
+  /** 模型 id，如 "gpt-4.1-mini" */
+  modelId: string;
+  /** API Key（可空，为空时复用 provider 已配置的 key 或 env） */
+  apiKey?: string;
+  /** 自定义 OpenAI 兼容 endpoint（仅当 provider 不是 pi 内置时使用） */
+  baseUrl?: string;
+  /** API 协议，默认 "openai-completions" */
+  api?: ApiProtocol;
+  reasoning?: boolean;
+  supportsImages?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+}
+
+/** 已注册 Agent 的轻量信息（前端下拉用）。 */
+export interface AgentInfo {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export interface AgentSettings {
   crawler: CrawlerSettings;
+  /** 模型预设列表 */
+  models: ModelPreset[];
+  /** 当前活动模型 preset id */
+  activeModelId?: string;
+  /** 当前活动 Agent id */
+  activeAgentId?: string;
 }
 
 export const DEFAULT_CRAWLER_SETTINGS: CrawlerSettings = {
@@ -168,4 +226,8 @@ export const DEFAULT_CRAWLER_SETTINGS: CrawlerSettings = {
   minDelaySec: 5,
   maxDelaySec: 15,
   maxPerTask: 50,
+};
+
+export const DEFAULT_MODEL_SETTINGS: Pick<AgentSettings, "models"> = {
+  models: [],
 };

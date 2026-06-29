@@ -10,7 +10,11 @@ import {
   NDropdown,
 } from "naive-ui";
 import type { DropdownOption } from "naive-ui";
-import type { AgentRuntimeInfo } from "../../../electron/shared";
+import type {
+  AgentInfo,
+  AgentRuntimeInfo,
+  ModelPreset,
+} from "../../../electron/shared";
 import type { ContextInfo } from "../../utils/chat";
 
 const props = defineProps<{
@@ -19,6 +23,10 @@ const props = defineProps<{
   pending: boolean;
   sessionTitle: string;
   sessionCount: number;
+  availableAgents: AgentInfo[];
+  activeAgentId: string | null;
+  availableModels: ModelPreset[];
+  activeModelId: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -26,6 +34,8 @@ const emit = defineEmits<{
   export: [];
   clear: [];
   stop: [];
+  "switch-agent": [id: string];
+  "switch-model": [id: string];
 }>();
 
 const progressStatus = computed<"success" | "warning" | "error" | "default">(
@@ -67,13 +77,37 @@ function onMoreSelect(key: string) {
   else if (key === "clear") emit("clear");
 }
 
-function formatTime(t: number): string {
-  return new Date(t).toLocaleString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    month: "2-digit",
-    day: "2-digit",
-  });
+/** Agent 下拉选项 */
+const agentOptions = computed<DropdownOption[]>(() =>
+  props.availableAgents.map((a) => ({
+    label: a.name + (a.description ? ` · ${a.description}` : ""),
+    key: a.id,
+  })),
+);
+const activeAgentName = computed(
+  () =>
+    props.availableAgents.find((a) => a.id === props.activeAgentId)?.name ??
+    "选择 Agent",
+);
+
+/** 模型下拉选项 */
+const modelOptions = computed<DropdownOption[]>(() =>
+  props.availableModels.map((m) => ({
+    label: `${m.name} · ${m.provider}/${m.modelId}`,
+    key: m.id,
+  })),
+);
+const activeModelName = computed(
+  () =>
+    props.availableModels.find((m) => m.id === props.activeModelId)?.name ??
+    "选择模型",
+);
+
+function onAgentSelect(key: string) {
+  emit("switch-agent", key);
+}
+function onModelSelect(key: string) {
+  emit("switch-model", key);
 }
 </script>
 
@@ -87,9 +121,31 @@ function formatTime(t: number): string {
         }}</span>
       </div>
       <NSpace :size="6" align="center" class="tags">
-        <NTag v-if="runtimeInfo?.modelId" size="small" type="info">{{
-          runtimeInfo.modelId
-        }}</NTag>
+        <NDropdown
+          v-if="availableAgents.length > 0"
+          trigger="click"
+          :options="agentOptions"
+          @select="onAgentSelect"
+        >
+          <NTag
+            size="small"
+            type="primary"
+            :bordered="true"
+            class="clickable-tag"
+          >
+            {{ activeAgentName }} ▾
+          </NTag>
+        </NDropdown>
+        <NDropdown
+          v-if="availableModels.length > 0"
+          trigger="click"
+          :options="modelOptions"
+          @select="onModelSelect"
+        >
+          <NTag size="small" type="info" :bordered="true" class="clickable-tag">
+            {{ activeModelName }} ▾
+          </NTag>
+        </NDropdown>
         <NTag
           size="small"
           :type="runtimeInfo?.hasApiKey ? 'success' : 'warning'"
@@ -200,6 +256,13 @@ function formatTime(t: number): string {
 }
 .tags {
   flex-shrink: 0;
+}
+.clickable-tag {
+  cursor: pointer;
+  user-select: none;
+}
+.clickable-tag:hover {
+  opacity: 0.85;
 }
 .actions-row {
   display: flex;

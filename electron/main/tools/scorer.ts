@@ -39,9 +39,9 @@ function coerceMatchLevel(raw: string): MatchLevel {
   return "中";
 }
 
-function coerceScore(raw: unknown): number {
+function coerceScore(raw: unknown): number | undefined {
   const n = Number(raw);
-  if (!Number.isFinite(n)) return 50;
+  if (!Number.isFinite(n)) return undefined;
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 
@@ -53,8 +53,11 @@ export function parseScoreJson(text: string): Partial<ScoreResult> {
   if (start === -1 || end === -1) return {};
   try {
     const obj = JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>;
+    const score = coerceScore(obj.score ?? obj.total ?? obj["总分"]);
+    // score 解析不到时不再静默兜底成 50，而是返回 undefined，让上层（scoreWithLlm）抛错走 fallback
+    if (score === undefined) return {};
     return {
-      score: coerceScore(obj.score ?? obj.total ?? obj["总分"]),
+      score,
       matchLevel: coerceMatchLevel(String(obj.matchLevel ?? obj["技能匹配度"] ?? "中")),
       jobHoppingRisk: String(obj.jobHoppingRisk ?? obj["跳槽频繁度风险"] ?? "未知"),
       reason: String(obj.reason ?? obj["推荐理由"] ?? ""),
@@ -108,13 +111,23 @@ export function createScorerTool(sdk: ToolSdk, deps: ToolDeps) {
       // 2) 调用 LLM 深度评分
       deps.notify("score", "硬规则通过，正在调用 LLM 进行深度评分…", "active");
       let result: ScoreResult;
+      let usedFallback = false;
       try {
         result = await deps.scoreWithLlm(resumeText, jd);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        deps.notify("error", `LLM 评分失败：${message}，回退为规则评分。`, "error");
-        // 回退：简单规则评分，保证流程不中断
+        usedFallback = true;
+        deps.notify(
+          "error",
+          `LLM 评分失败，已回退为规则评分。失败原因：${message.slice(0, 120)}`,
+          "error",
+        );
         result = fallbackScore(resumeText, jd);
+      }
+
+      // 标记 fallback 评分（让前端能区分"真评分"与"规则兜底"）
+      if (usedFallback) {
+        result = { ...result, reason: `[规则回退] ${result.reason}` };
       }
 
       const verdict = result.score > 60 ? "建议入库" : "不建议入库";
@@ -142,19 +155,77 @@ function formatScore(r: ScoreResult): string {
   ].join("\n");
 }
 
-/** LLM 不可用时的回退规则评分：按技能命中率 + 年限粗评。 */
+/**
+ * LLM 不可用时的回退规则评分 —— 多特征加权：
+ *   - 关键词命中率（权重 50）：JD 关键词在简历中的命中比例
+ *   - 年限匹配度（权重 25）：简历年限 vs JD 要求年限
+ *   - 简历完整度（权重 15）：简历长度反映信息量
+ *   - 技能密度（权重 10）：技能关键词在简历中出现频次
+ * 最终分数区间约 35-90，避免所有候选人都卡在 50 分附近，让用户能看出区分度。
+ */
 function fallbackScore(resumeText: string, jd: string): ScoreResult {
-  const jdTokens = jd
-    .split(/[，,。.、\s/]+/)
-    .map((t) => t.trim())
-    .filter((t) => t.length >= 2);
-  const hit = jdTokens.filter((t) => resumeText.toLowerCase().includes(t.toLowerCase())).length;
-  const ratio = jdTokens.length ? hit / jdTokens.length : 0.5;
-  const score = Math.round(40 + ratio * 55);
+  const resumeLower = resumeText.toLowerCase();
+  const jdLower = jd.toLowerCase();
+
+  // 1) 关键词命中率（去除常见停用词）
+  const stopWords = new Set([
+    "的", "了", "和", "是", "在", "有", "与", "或", "等", "以上", "以下",
+    "需要", "要求", "优先", "具备", "熟悉", "熟练", "掌握", "了解",
+  ]);
+  const jdTokens = Array.from(
+    new Set(
+      jd
+        .split(/[，,。.、\s/()（）\[\]]+/)
+        .map((t) => t.trim())
+        .filter((t) => t.length >= 2 && !stopWords.has(t.toLowerCase())),
+    ),
+  );
+  const hitCount = jdTokens.filter((t) =>
+    resumeLower.includes(t.toLowerCase()),
+  ).length;
+  const keywordRatio = jdTokens.length ? hitCount / jdTokens.length : 0.5;
+  const keywordScore = keywordRatio * 50; // 0-50
+
+  // 2) 年限匹配度
+  const resumeYears = parseYears(resumeText);
+  const jdYears = parseYears(jd);
+  let yearScore: number;
+  if (jdYears === null || resumeYears === null) {
+    yearScore = 12.5; // 未知时给中位分
+  } else if (resumeYears >= jdYears) {
+    // 满足或超出年限要求
+    yearScore = 25;
+  } else if (resumeYears >= jdYears - 1) {
+    // 差 1 年，可接受
+    yearScore = 20;
+  } else {
+    // 差距较大
+    yearScore = Math.max(0, 25 - (jdYears - resumeYears) * 5);
+  }
+
+  // 3) 简历完整度（按字数分段）
+  const len = resumeText.length;
+  let lenScore: number;
+  if (len >= 800) lenScore = 15;
+  else if (len >= 400) lenScore = 12;
+  else if (len >= 200) lenScore = 8;
+  else if (len >= 80) lenScore = 5;
+  else lenScore = 2;
+
+  // 4) 技能密度（统计技能关键词在简历中出现的次数）
+  const skillKeywords = ["vue", "react", "typescript", "javascript", "node", "webpack",
+    "java", "python", "go", "rust", "mysql", "redis", "docker", "k8s",
+    "前端", "后端", "全栈", "架构", "工程", "项目"];
+  const skillHits = skillKeywords.filter((k) => resumeLower.includes(k)).length;
+  const skillScore = Math.min(10, skillHits * 2);
+
+  const raw = 35 + keywordScore + yearScore + lenScore + skillScore;
+  const score = Math.max(35, Math.min(90, Math.round(raw)));
+
   return {
-    score: Math.min(95, score),
+    score,
     matchLevel: score >= 75 ? "高" : score >= 55 ? "中" : "低",
     jobHoppingRisk: "未知（LLM 不可用，未评估）",
-    reason: `规则回退评分：JD 关键词命中率约 ${(ratio * 100).toFixed(0)}%。`,
+    reason: `规则回退评分：关键词命中率 ${(keywordRatio * 100).toFixed(0)}%（${hitCount}/${jdTokens.length}），年限 ${resumeYears ?? "?"}/${jdYears ?? "?"}，简历 ${len} 字。`,
   };
 }

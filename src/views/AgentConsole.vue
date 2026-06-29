@@ -6,10 +6,8 @@ import { useMessage } from "naive-ui";
 import {
   copyText as utilCopyText,
   downloadText,
-  estimateSessionTokens,
   exportMessagesAsMarkdown,
   getContextInfo,
-  MAX_CONTEXT_TOKENS,
 } from "../utils/chat";
 import ChatHeader from "../components/chat/ChatHeader.vue";
 import ChatMessage from "../components/chat/ChatMessage.vue";
@@ -32,6 +30,19 @@ const hasMessages = computed(
 const contextInfo = computed(() => getContextInfo(messages.value));
 const sessionTitle = computed(() => sessions.current?.title ?? "新会话");
 const sessionCount = computed(() => sessions.sessions.length);
+
+/**
+ * 是否显示"思考中"加载气泡。
+ * 满足以下条件时显示：
+ *   1. agent.pending = true（已发请求）
+ *   2. 最后一条消息不是 pending 的 assistant（否则 ChatMessage 自己有 streaming-dot）
+ * 也就是说，请求发出但还没收到第一个 delta 时显示。
+ */
+const showThinkingBubble = computed(() => {
+  if (!agent.pending) return false;
+  const last = messages.value[messages.value.length - 1];
+  return !last || last.role !== "assistant" || last.pending !== true;
+});
 
 function scrollToBottom() {
   nextTick(() => {
@@ -67,8 +78,7 @@ function onSend(text: string) {
 }
 
 function onStop() {
-  // 当前 IPC 未暴露 cancel，pending 会随 done/error 自动清；这里只做 UI 提示
-  message.info("已请求停止（实际停止由后端完成本次响应后控制）");
+  void agent.abort();
 }
 
 function onExport() {
@@ -112,6 +122,14 @@ function onSuggestion(text: string) {
   agent.send(text);
   scrollToBottom();
 }
+
+function onSwitchAgent(id: string) {
+  void agent.switchAgent(id);
+}
+
+function onSwitchModel(id: string) {
+  void agent.switchModel(id);
+}
 </script>
 
 <template>
@@ -131,10 +149,16 @@ function onSuggestion(text: string) {
         :pending="agent.pending"
         :session-title="sessionTitle"
         :session-count="sessionCount"
+        :available-agents="agent.availableAgents"
+        :active-agent-id="agent.activeAgentId"
+        :available-models="agent.availableModels"
+        :active-model-id="agent.activeModelId"
         @new="onNewSession"
         @export="onExport"
         @clear="onClear"
         @stop="onStop"
+        @switch-agent="onSwitchAgent"
+        @switch-model="onSwitchModel"
       />
 
       <div ref="scrollRoot" class="messages">
@@ -150,6 +174,15 @@ function onSuggestion(text: string) {
             :message="msg"
             @copy="onCopy"
           />
+          <!-- 思考中加载气泡：pending 但还没收到第一个 delta -->
+          <div v-if="showThinkingBubble" class="thinking-bubble">
+            <span class="thinking-label">招聘 Agent 正在思考</span>
+            <span class="thinking-dots">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+            </span>
+          </div>
         </template>
       </div>
 
@@ -197,5 +230,51 @@ function onSuggestion(text: string) {
   border-right: none;
   border-bottom: none;
   overflow: hidden;
+}
+
+/* 思考中加载气泡 */
+.thinking-bubble {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(75, 131, 255, 0.06);
+  border: 1px solid rgba(75, 131, 255, 0.2);
+  font-size: 13px;
+  color: rgba(226, 236, 255, 0.7);
+}
+.thinking-label {
+  font-weight: 500;
+}
+.thinking-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+.thinking-dots .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4b83ff;
+  animation: thinking-bounce 1.2s infinite ease-in-out;
+}
+.thinking-dots .dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.thinking-dots .dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes thinking-bounce {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 </style>

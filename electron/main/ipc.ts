@@ -1,4 +1,4 @@
-// IPC 处理器注册 —— agent 流式 / 牛人库 CRUD / 设置。
+// IPC 处理器注册 —— agent 流式 / 牛人库 CRUD / 设置 / 模型与 Agent 切换。
 import { ipcMain, type BrowserWindow } from "electron";
 import { randomUUID } from "node:crypto";
 import type { RecruitmentAgent } from "./agent-core";
@@ -11,11 +11,13 @@ import {
   updateStatus,
 } from "./db/sqlite";
 import { loadSettings, saveSettings } from "./settings-store";
+import { listAgents } from "./agents";
 import type {
   AgentRuntimeInfo,
   CandidateFilter,
   CandidateStatus,
   CrawlerSettings,
+  ModelPreset,
 } from "../shared";
 
 export interface IpcDeps {
@@ -46,6 +48,11 @@ export function registerIpc(deps: IpcDeps) {
 
   ipcMain.handle("agent:reset-session", async () => agent.reset());
 
+  /** 中止当前流式响应 —— 不重置会话历史，pending 由后续 done/error 自动清除 */
+  ipcMain.handle("agent:abort", async () => {
+    await agent.abort();
+  });
+
   ipcMain.handle("agent:send-message", async (_event, prompt: string) => {
     await agent.sendPrompt(prompt, {
       onDelta: (payload) => send(CHANNELS.delta, payload),
@@ -67,7 +74,24 @@ export function registerIpc(deps: IpcDeps) {
 
   ipcMain.handle("settings:get", async () => loadSettings());
   ipcMain.handle("settings:save", async (_event, patch: Partial<CrawlerSettings>) =>
-    saveSettings(patch),
+    saveSettings({ crawler: patch }),
+  );
+
+  // —— 模型 preset 管理 / 切换 ——
+  ipcMain.handle("agent:list-models", async () => loadSettings().models);
+  ipcMain.handle("agent:save-models", async (_event, models: ModelPreset[]) =>
+    saveSettings({ models }),
+  );
+  ipcMain.handle("agent:switch-model", async (_event, id: string) =>
+    agent.switchModel(id),
+  );
+
+  // —— Agent 列表 / 切换 ——
+  ipcMain.handle("agent:list-agents", async () =>
+    listAgents().map(({ id, name, description }) => ({ id, name, description })),
+  );
+  ipcMain.handle("agent:switch-agent", async (_event, id: string) =>
+    agent.switchAgent(id),
   );
 }
 

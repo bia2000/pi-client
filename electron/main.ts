@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from "electron";
 import path from "node:path";
+import "./main/agents"; // 触发内置 Agent 注册（boss-recruit 等）
 import { RecruitmentAgent } from "./main/agent-core";
 import { closeDb, initDb } from "./main/db/sqlite";
 import { makeTimelineSender, registerIpc } from "./main/ipc";
